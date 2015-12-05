@@ -1,49 +1,82 @@
 import java.util.Arrays;
-
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
-
 import java.util.Scanner;
+import java.util.Set;
 
 class RunnableMasterThread implements Runnable {
     private Thread t;
     private String threadName;
-    Modeling modeling;
+    private long secondsFromStart;
+    public Modeling modeling;
+
+    public Set<Thread> threadSet = Thread.getAllStackTraces().keySet();
+    public String[] managingThreadSet = {"Finalizer", "masterThread", "main", "Reference Handler",
+            "Signal Dispatcher", "Monitor Ctrl-Break", "DestroyJavaVM", "SIGINT handler"};
 
     RunnableMasterThread(String name, Modeling modeling) {
-        threadName = name;
+
+        this.threadName = name;
         this.modeling = modeling;
+        this.secondsFromStart = 0;
     }
 
     public void run() {
         int currentIteration = 0;
         while (currentIteration != modeling.iterationNum) {
-            boolean completed = true;
-            for(boolean value: modeling.isParticleIterated) {
-                if(!value) {
-                    completed = false;
-                }
-            }
-            if (completed) {
+
+            if (this.allTrue(modeling.isParticleIterated)) {
+
                 modeling.initIsParticleIterated();
+
                 if (modeling.modelingMode.equals("1")) {
 
                     try {
-                        t.sleep((long) modeling.delay * 1000);
+                        t.sleep((long) (modeling.delay * 1000));
                     } catch (InterruptedException e) {
                         System.out.println(e);
                     }
-                    System.out.println("Distribution of particles in the crystal on " + (currentIteration + 1) + " iteration:" );
-                    System.out.println(Arrays.toString(modeling.crystal.crystalState) + "\n");
+
+                    this.showCrystalState(currentIteration);
                 }
-                modeling.wakeUpAll();
+
+                if (modeling.modelingMode.equals("2")) {
+                    long currentSecond = (System.currentTimeMillis() - BrownianMotion.startTime) / 1000;
+
+                    if(currentSecond != this.secondsFromStart) {
+                        this.secondsFromStart = currentSecond;
+
+                        this.showCrystalState(currentIteration);
+                    }
+                }
+
+                while(true) {
+
+                    boolean[] isThreadWaiting = new boolean[modeling.crystal.K];
+
+                    for(Thread thread: this.threadSet) {
+                        if(!Arrays.asList(this.managingThreadSet).contains(thread.getName())) {
+
+                            if(((thread.getState()).toString()).equals("WAITING")) {
+                                isThreadWaiting[Integer.parseInt(thread.getName())] = true;
+                            }
+                        }
+                    }
+
+                    if(this.allTrue(isThreadWaiting)) {
+                        modeling.wakeUpAll();
+                        break;
+                    }
+                 }
+
                 currentIteration++;
             }
         }
 
         System.out.println("Final distribution of particles in the crystal:");
         System.out.println(Arrays.toString(modeling.crystal.crystalState));
-
+        System.out.println("Execution time of modeling is: " +
+                (float) (System.currentTimeMillis() - BrownianMotion.startTime) / 1000 + " seconds");
     }
 
     public void start() {
@@ -52,6 +85,29 @@ class RunnableMasterThread implements Runnable {
             t.start();
         }
     }
+
+    public int arraySum (int[] arr) {
+        int sum = 0;
+        for (int val: arr) {
+            sum += val;
+        }
+        return sum;
+    }
+
+    public void showCrystalState(int currentIteration) {
+        System.out.println("Distribution of particles in the crystal on " + (currentIteration + 1) + " iteration:" );
+        System.out.println(Arrays.toString(modeling.crystal.crystalState));
+        System.out.println("There are " + this.arraySum(modeling.crystal.crystalState) + " particles in the crystal.\n");
+    }
+
+    private boolean allTrue (boolean[] values) {
+        for (boolean value : values) {
+            if (!value)
+                return false;
+        }
+        return true;
+    }
+
 }
 
 class RunnableParticle implements Runnable {
@@ -99,7 +155,6 @@ class Crystal {
 
         System.out.println("Enter probability of movement right hand side");
         p = Float.parseFloat(scanner.nextLine());
-
     }
 
     public void initCrystalState() {
@@ -123,11 +178,9 @@ class Modeling {
 
     private final Lock lock = new ReentrantLock();
 
+
     public void initIsParticleIterated() {
         isParticleIterated = new boolean[crystal.K];
-        for (int i = 0; i < crystal.K; i++) {
-            isParticleIterated[i] = false;
-        }
     }
 
     public synchronized void setParticleIterated(int particleNum) {
@@ -146,9 +199,11 @@ class Modeling {
     }
 
     public void runCrystalModeling() {
-        System.out.println("Starting modeling...");
+        System.out.println("Starting modeling...\n");
 
         crystal.initCrystalState();
+
+        BrownianMotion.startTime = System.currentTimeMillis();
 
         RunnableParticle[] runnableParticles = new RunnableParticle[crystal.K];
         for (int i = 0; i < crystal.K; i++) {
@@ -158,6 +213,7 @@ class Modeling {
 
         RunnableMasterThread runnableMasterThread = new RunnableMasterThread("masterThread", this);
         runnableMasterThread.start();
+
     }
 
     public void runParticleModeling(int particleNum) {
@@ -230,6 +286,7 @@ public class BrownianMotion {
     public static float executionTime;
     public static float delay;
     public static int iterationNum;
+    public static long startTime;
 
     public static void setModelingParams() {
         Scanner scanner = new Scanner(System.in);
@@ -255,7 +312,7 @@ public class BrownianMotion {
             delay = Float.parseFloat(scanner.nextLine());
 
             iterationNum = (int) (executionTime/delay);
-            System.out.println("Calculated nymber of iterations: " + iterationNum);
+            System.out.println("Calculated number of iterations: " + iterationNum);
         }
 
         if (modelingMode.equals("2")) {
